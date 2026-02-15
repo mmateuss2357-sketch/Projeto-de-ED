@@ -266,3 +266,138 @@ void exibir_boletim(Aluno *a) {
     }
     printf("======================================================\n");
 }
+
+
+
+/* ==========================================================================
+FILA DE ESPERA E CONTROLE DE VAGAS
+   ========================================================================== */
+
+// 1. ESTRUTURA DA FILA
+// Usamos um nó específico para a fila que apenas "aponta" para o aluno,
+// assim não quebramos o ponteiro "proximo" da lista encadeada original.
+typedef struct NoFila {
+    Aluno *aluno;
+    struct NoFila *proximo;
+} NoFila;
+
+typedef struct FilaEspera {
+    NoFila *inicio;
+    NoFila *fim;
+    int quantidade;
+} FilaEspera;
+
+// 2. FUNÇÕES BÁSICAS DA FILA (CRUD DA FILA)
+
+FilaEspera* criar_fila() {
+    FilaEspera *f = (FilaEspera*) malloc(sizeof(FilaEspera));
+    f->inicio = NULL;
+    f->fim = NULL;
+    f->quantidade = 0;
+    return f;
+}
+
+// Push/Enqueue - Insere o aluno no final da fila de espera
+void enfileirar(FilaEspera *f, Aluno *a) {
+    if (!f || !a) return;
+    
+    NoFila *novo = (NoFila*) malloc(sizeof(NoFila));
+    novo->aluno = a;
+    novo->proximo = NULL;
+
+    if (f->fim == NULL) {
+        f->inicio = novo; // Fila estava vazia
+    } else {
+        f->fim->proximo = novo; // Liga o último atual ao novo
+    }
+    f->fim = novo; // O novo passa a ser o último
+    f->quantidade++;
+    
+    printf("FILA: %s adicionado a fila de espera (Posicao: %d).\n", a->nome, f->quantidade);
+}
+
+// Pop/Dequeue - Retira e retorna o aluno do início da fila
+Aluno* desenfileirar(FilaEspera *f) {
+    if (!f || f->inicio == NULL) return NULL; // Fila vazia
+
+    NoFila *temp = f->inicio;
+    Aluno *a_removido = temp->aluno; 
+
+    f->inicio = f->inicio->proximo; 
+    
+    if (f->inicio == NULL) {
+        f->fim = NULL; 
+    }
+    
+    free(temp); // Libera o nó da fila, mas mantém o aluno intacto!
+    f->quantidade--;
+    
+    return a_removido;
+}
+
+void exibir_fila(FilaEspera *f) {
+    if (!f || f->inicio == NULL) {
+        printf("\n[ Fila de Espera Vazia ]\n");
+        return;
+    }
+    printf("\n--- FILA DE ESPERA (%d alunos aguardando) ---\n", f->quantidade);
+    NoFila *atual = f->inicio;
+    int pos = 1;
+    while (atual != NULL) {
+        printf("%dº lugar - Nome: %-20s | Mat: %s\n", pos++, atual->aluno->nome, atual->aluno->matricula);
+        atual = atual->proximo;
+    }
+}
+
+// Função que decide se o aluno entra na Turma ou vai para a Fila
+void processar_matricula_turma(Turma *t, Aluno *a, FilaEspera *f) {
+    if (t->qtd_atual < t->limite_vagas) {
+        // Inserção na Lista Encadeada (Turma)
+        a->proximo = t->lista_alunos;
+        t->lista_alunos = a;
+        t->qtd_atual++;
+        printf("SUCESSO: %s matriculado na turma %s.\n", a->nome, t->codigo);
+    } else {
+        // Lotação atingida: vai para a Fila (Integrante 2 atua)
+        printf("ALERTA: Turma %s lotada! ", t->codigo);
+        enfileirar(f, a);
+    }
+}
+
+// Função de remover da turma que puxa automaticamente o próximo da fila
+void remover_aluno_turma(Turma *t, char *matricula, FilaEspera *f) {
+    if (!t || !t->lista_alunos) return;
+
+    Aluno *atual = t->lista_alunos;
+    Aluno *anterior = NULL;
+
+    while (atual != NULL && strcmp(atual->matricula, matricula) != 0) {
+        anterior = atual;
+        atual = atual->proximo;
+    }
+
+    if (atual == NULL) {
+        printf("ERRO: Aluno %s nao encontrado.\n", matricula);
+        return;
+    }
+
+    // Remove da lista
+    if (anterior == NULL) {
+        t->lista_alunos = atual->proximo;
+    } else {
+        anterior->proximo = atual->proximo;
+    }
+    t->qtd_atual--;
+    printf("AVISO: %s foi removido da turma %s. Uma vaga abriu!\n", atual->nome, t->codigo);
+    
+    atual->proximo = NULL; 
+
+    // Automação: Puxa o primeiro da fila para preencher a vaga
+    if (f->quantidade > 0) {
+        Aluno *promovido = desenfileirar(f);
+        if (promovido) {
+            printf(">> SISTEMA: Promovendo o proximo da fila de espera...\n");
+            processar_matricula_turma(t, promovido, f); 
+        }
+    }
+}
