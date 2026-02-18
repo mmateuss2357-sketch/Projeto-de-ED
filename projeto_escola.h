@@ -265,6 +265,7 @@ void exibir_boletim(Aluno *a) {
         d = d->proximo;
     }
     printf("======================================================\n");
+
 }
 
 
@@ -400,4 +401,99 @@ void remover_aluno_turma(Turma *t, char *matricula, FilaEspera *f) {
             processar_matricula_turma(t, promovido, f); 
         }
     }
+}
+
+/* ============================================================
+   ESTRUTURA PARA PILHA DE AÇÕES (DESFAZER/UNDO)
+   ============================================================ */
+
+// Cada ação representa uma operação que pode ser desfeita
+typedef struct Acao {
+    char tipo[20];       // Tipo da ação: "nota", "professor_removido", "aluno_removido"
+    void *dado;          // Ponteiro genérico para o dado que será restaurado
+    struct Acao *proximo; // Próximo elemento da pilha (topo -> próximo)
+} Acao;
+
+// Pilha que mantém o topo das ações salvas
+typedef struct Pilha {
+    Acao *topo;           // Ponteiro para o topo da pilha
+} Pilha;
+
+// Função para criar uma pilha vazia
+Pilha* criarPilha() {
+    Pilha *p = (Pilha*) malloc(sizeof(Pilha)); // Aloca memória para a pilha
+    if (!p) return NULL;                        // Se malloc falhar, retorna NULL
+    p->topo = NULL;                             // Inicialmente, a pilha está vazia
+    return p;
+}
+
+// Função para salvar uma ação na pilha antes de qualquer alteração
+void salvar_acao(Pilha *p, char *tipo, void *dado) {
+    if (!p || !tipo || !dado) return;          // Segurança: nada para salvar se algum for NULL
+
+    Acao *novo = (Acao*) malloc(sizeof(Acao)); // Cria um novo nó de ação
+    strcpy(novo->tipo, tipo);                  // Copia o tipo da ação
+    novo->dado = dado;                         // Salva o ponteiro para o dado
+    novo->proximo = p->topo;                   // Faz o novo apontar para o topo atual
+    p->topo = novo;                            // Atualiza o topo da pilha para o novo nó
+}
+
+// Função para desfazer a última ação
+void desfazer(Pilha *p) {
+    if (!p || !p->topo) {                      // Se pilha vazia
+        printf("Nada para desfazer!\n");
+        return;
+    }
+
+    Acao *a = p->topo;                         // Pegamos a ação do topo
+    p->topo = a->proximo;                       // Atualizamos o topo para o próximo
+
+    // Dependendo do tipo, restaura-se o estado antigo
+    if (strcmp(a->tipo, "nota") == 0) {
+        Unidade *u = (Unidade*) a->dado;       // Recupera a unidade antiga
+        // Copia os valores de volta para a estrutura original
+    } 
+    else if (strcmp(a->tipo, "professor_removido") == 0) {
+        Professor *p_restaurar = (Professor*) a->dado;
+        // Reinsere o professor removido na lista global
+    } 
+    else if (strcmp(a->tipo, "aluno_removido") == 0) {
+        Aluno *a_restaurar = (Aluno*) a->dado;
+        // Reinsere o aluno removido na lista da turma
+    }
+
+    free(a);                                   // Libera a memória do nó da pilha (não o dado)
+}
+
+/* ============================================================
+   ESTRUTURA DE PILHA PARA HISTÓRICO DE MENUS
+   ============================================================ */
+
+// Cada nó representa uma tela/menu visitado
+typedef struct Menu {
+    int id_menu;           // Identificador da tela/menu
+    struct Menu *proximo;  // Próximo menu na pilha (histórico)
+} Menu;
+
+// Variável global para controlar o topo da pilha de menus
+Menu *menu_topo = NULL;
+
+// Empilha ao entrar em um menu
+void entrar_menu(int id) {
+    Menu *novo = malloc(sizeof(Menu));  // Aloca memória para o nó do menu
+    if (!novo) return;                  // Se malloc falhar, sai
+    novo->id_menu = id;                 // Guarda o ID do menu
+    novo->proximo = menu_topo;          // Aponta para o menu anterior (topo atual)
+    menu_topo = novo;                   // Atualiza o topo da pilha
+}
+
+// Desempilha ao voltar para o menu anterior
+int voltar_menu() {
+    if (!menu_topo) return -1;          // Se pilha vazia, retorna -1 (nenhum menu anterior)
+
+    Menu *temp = menu_topo;             // Guarda o topo atual
+    menu_topo = menu_topo->proximo;     // Atualiza o topo para o próximo da pilha
+    int id = temp->id_menu;             // Recupera o ID do menu a retornar
+    free(temp);                         // Libera a memória do nó desempilhado
+    return id;                          // Retorna o ID do menu anterior
 }
