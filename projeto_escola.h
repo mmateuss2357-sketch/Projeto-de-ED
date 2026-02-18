@@ -498,3 +498,228 @@ int voltar_menu() {
     return id;                          // Retorna o ID do menu anterior
 }
 
+/* Valida se a nota esta entre 0.0 e 10.0.
+   Retorna 1 se valida, 0 se invalida (com mensagem de erro). */
+int validar_nota(float nota) {
+    if (nota < 0.0f || nota > 10.0f) {
+        printf("[ERRO] Nota invalida: %.2f. Deve estar entre 0.0 e 10.0.\n", nota);
+        return 0;
+    }
+    return 1;
+}
+
+/* Valida se unidade (1-4) e prova (1-2) sao valores aceitos. */
+static int validar_unidade_prova(int unidade, int prova) {
+    if (unidade < 1 || unidade > 4) {
+        printf("[ERRO] Unidade invalida: %d. Deve ser entre 1 e 4.\n", unidade);
+        return 0;
+    }
+    if (prova != 1 && prova != 2) {
+        printf("[ERRO] Prova invalida: %d. Deve ser 1 ou 2.\n", prova);
+        return 0;
+    }
+    return 1;
+}
+
+/* Struct auxiliar que guarda o estado de uma unidade antes de ser alterada.
+   E o que fica salvo na Pilha para permitir o Desfazer. */
+typedef struct {
+    Aluno  *aluno;
+    char    materia[50];
+    int     unidade;    /* indice 0-based */
+    Unidade estado;     /* copia completa antes da edicao */
+} SnapshotNota;
+
+/* Cria uma copia do estado atual da unidade e empilha com tipo "nota".
+   Deve ser chamada ANTES de qualquer alteracao. */
+static int salvar_snapshot_nota(Pilha *p, Aluno *a, char *materia, int unidade_idx) {
+    if (!p || !a) return 0;
+    Disciplina *d = a->lista_disciplinas;
+    while (d) {
+        if (strcmp(d->nome, materia) == 0) {
+            SnapshotNota *snap = (SnapshotNota*) malloc(sizeof(SnapshotNota));
+            if (!snap) return 0;
+            snap->aluno   = a;
+            snap->unidade = unidade_idx;
+            strcpy(snap->materia, materia);
+            snap->estado  = d->unidades[unidade_idx];
+            salvar_acao(p, "nota", snap);
+            return 1;
+        }
+        d = d->proximo;
+    }
+    return 0;
+}
+
+/* Restaura o estado de uma nota a partir do topo da Pilha (tipo "nota"). */
+void desfazer_nota(Pilha *p) {
+    if (!p || !p->topo) {
+        printf("[INFO] Nada para desfazer.\n");
+        return;
+    }
+    Acao *acao = p->topo;
+    if (strcmp(acao->tipo, "nota") != 0) {
+        printf("[INFO] A ultima acao na pilha nao e de nota.\n");
+        return;
+    }
+    p->topo = acao->proximo;
+    SnapshotNota *snap = (SnapshotNota*) acao->dado;
+    Disciplina *d = snap->aluno->lista_disciplinas;
+    while (d) {
+        if (strcmp(d->nome, snap->materia) == 0) {
+            d->unidades[snap->unidade] = snap->estado;
+            printf("[UNDO] Restaurado: %s | %s | Unidade %d -> P1:%.2f P2:%.2f Media:%.2f\n",
+                   snap->aluno->nome, snap->materia, snap->unidade + 1,
+                   snap->estado.prova1, snap->estado.prova2, snap->estado.media_unidade);
+            break;
+        }
+        d = d->proximo;
+    }
+    free(snap);
+    free(acao);
+}
+
+/* Lanca nota com validacao completa e salva snapshot para desfazer. */
+void lancar_nota_validada(Aluno *lista, Pilha *seguranca,
+                          char *mat, char *materia,
+                          int unidade, int prova, float nota) {
+    if (!validar_nota(nota))                    return;
+    if (!validar_unidade_prova(unidade, prova)) return;
+    Aluno *a = buscar_aluno(lista, mat);
+    if (!a) { printf("[ERRO] Aluno '%s' nao encontrado.\n", mat); return; }
+    salvar_snapshot_nota(seguranca, a, materia, unidade - 1);
+    lancar_nota(lista, mat, materia, unidade, prova, nota);
+    printf("[SUCESSO] Nota %.2f lancada: %s | %s | Unidade %d | Prova %d\n",
+           nota, a->nome, materia, unidade, prova);
+}
+
+/* Edita uma nota ja existente com validacao e suporte a desfazer. */
+void alterar_nota(Aluno *lista, Pilha *seguranca,
+                  char *mat, char *materia,
+                  int unidade, int prova, float nova_nota) {
+    if (!validar_nota(nova_nota))               return;
+    if (!validar_unidade_prova(unidade, prova)) return;
+    Aluno *a = buscar_aluno(lista, mat);
+    if (!a) { printf("[ERRO] Aluno '%s' nao encontrado.\n", mat); return; }
+    Disciplina *d = a->lista_disciplinas;
+    while (d) {
+        if (strcmp(d->nome, materia) == 0) {
+            float antiga = (prova == 1) ? d->unidades[unidade-1].prova1
+                                        : d->unidades[unidade-1].prova2;
+            salvar_snapshot_nota(seguranca, a, materia, unidade - 1);
+            if (prova == 1) d->unidades[unidade-1].prova1 = nova_nota;
+            else            d->unidades[unidade-1].prova2 = nova_nota;
+            d->unidades[unidade-1].media_unidade =
+                (d->unidades[unidade-1].prova1 + d->unidades[unidade-1].prova2) / 2.0f;
+            printf("[SUCESSO] Nota alterada: %s | %s | U%d P%d: %.2f -> %.2f | Media: %.2f\n",
+                   a->nome, materia, unidade, prova, antiga, nova_nota,
+                   d->unidades[unidade-1].media_unidade);
+            return;
+        }
+        d = d->proximo;
+    }
+    printf("[ERRO] Disciplina '%s' nao encontrada.\n", materia);
+}
+
+/* Zera uma nota especifica e recalcula a media da unidade. */
+void remover_nota(Aluno *lista, Pilha *seguranca,
+                  char *mat, char *materia, int unidade, int prova) {
+    if (!validar_unidade_prova(unidade, prova)) return;
+    Aluno *a = buscar_aluno(lista, mat);
+    if (!a) { printf("[ERRO] Aluno '%s' nao encontrado.\n", mat); return; }
+    Disciplina *d = a->lista_disciplinas;
+    while (d) {
+        if (strcmp(d->nome, materia) == 0) {
+            salvar_snapshot_nota(seguranca, a, materia, unidade - 1);
+            if (prova == 1) d->unidades[unidade-1].prova1 = 0.0f;
+            else            d->unidades[unidade-1].prova2 = 0.0f;
+            d->unidades[unidade-1].media_unidade =
+                (d->unidades[unidade-1].prova1 + d->unidades[unidade-1].prova2) / 2.0f;
+            printf("[SUCESSO] Nota zerada: %s | %s | Unidade %d | Prova %d\n",
+                   a->nome, materia, unidade, prova);
+            return;
+        }
+        d = d->proximo;
+    }
+    printf("[ERRO] Disciplina '%s' nao encontrada.\n", materia);
+}
+
+/* Exibe o quadro completo de notas de um aluno (todas as disciplinas). */
+void consultar_notas_aluno(Aluno *lista, char *mat) {
+    Aluno *a = buscar_aluno(lista, mat);
+    if (!a) { printf("[ERRO] Aluno '%s' nao encontrado.\n", mat); return; }
+    printf("\n======== QUADRO DE NOTAS: %s (%s) ========\n", a->nome, a->matricula);
+    Disciplina *d = a->lista_disciplinas;
+    while (d) {
+        printf("%-15s | ", d->nome);
+        for (int i = 0; i < 4; i++) {
+            printf("U%d[P1:%.1f P2:%.1f M:%.1f] ",
+                   i+1, d->unidades[i].prova1,
+                   d->unidades[i].prova2, d->unidades[i].media_unidade);
+        }
+        printf("\n");
+        d = d->proximo;
+    }
+    printf("===================================================\n");
+}
+
+/* Calcula a media geral do aluno (media das medias_final de cada disciplina).
+   Atualiza o campo media_final de cada Disciplina como efeito colateral. */
+float calcular_media_aluno(Aluno *a) {
+    if (!a) return 0.0f;
+    float soma = 0.0f;
+    int   qtd  = 0;
+    Disciplina *d = a->lista_disciplinas;
+    while (d) {
+        float su = 0.0f;
+        for (int i = 0; i < 4; i++) su += d->unidades[i].media_unidade;
+        d->media_final = su / 4.0f;
+        soma += d->media_final;
+        qtd++;
+        d = d->proximo;
+    }
+    return (qtd > 0) ? (soma / (float)qtd) : 0.0f;
+}
+
+/* Fechamento da turma: percorre a lista, calcula medias e exibe
+   relatorio com Aprovados (media >= 5.0) e Reprovados. */
+void gerar_relatorio_final(Turma *t) {
+    if (!t) { printf("[ERRO] Nenhuma turma disponivel.\n"); return; }
+    if (!t->lista_alunos) {
+        printf("[AVISO] Turma %s sem alunos matriculados.\n", t->codigo);
+        return;
+    }
+    int aprovados = 0, reprovados = 0;
+    printf("\n##############################################################\n");
+    printf("##    FECHAMENTO DE NOTAS — TURMA %-10s             ##\n", t->codigo);
+    printf("##    Serie: %d | Alunos: %d / %d vagas                  ##\n",
+           t->serie, t->qtd_atual, t->limite_vagas);
+    printf("##############################################################\n");
+    Aluno *atual = t->lista_alunos;
+    while (atual != NULL) {
+        float mg = calcular_media_aluno(atual);
+        const char *status = (mg >= 5.0f) ? "APROVADO " : "REPROVADO";
+        if (mg >= 5.0f) aprovados++; else reprovados++;
+        printf("\n>> %-20s | Mat: %-12s | Media: %5.2f | [%s]\n",
+               atual->nome, atual->matricula, mg, status);
+        Disciplina *d = atual->lista_disciplinas;
+        while (d) {
+            printf("   %-15s | ", d->nome);
+            for (int i = 0; i < 4; i++)
+                printf("U%d:%.1f ", i+1, d->unidades[i].media_unidade);
+            printf("| Anual: %.2f", d->media_final);
+            if (d->media_final < 5.0f) printf(" [!]");
+            printf("\n");
+            d = d->proximo;
+        }
+        printf("   ----------------------------------------------------------\n");
+        atual = atual->proximo;
+    }
+    printf("\n##############################################################\n");
+    printf("##  Aprovados: %d | Reprovados: %d | Total: %d             ##\n",
+           aprovados, reprovados, aprovados + reprovados);
+    if (aprovados + reprovados > 0)
+        printf("##  Taxa de aprovacao: %.1f%%                              ##\n",
+               100.0f * aprovados / (aprovados + reprovados));
+    printf("##############################################################\n\n");
+}
